@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Offline self-test: parser + clustering + rendering, no network."""
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -26,6 +27,19 @@ ARXIV = """<?xml version="1.0"?><rss version="2.0"><channel>
 def expect(cond, label):
     print(("PASS  " if cond else "FAIL  ") + label)
     return bool(cond)
+
+
+def test_budget_guard():
+    """A feed that never returns must not hang the job."""
+    orig_feeds, orig_fetch = b.FEEDS, b.fetch
+    b.FEEDS = [("slow", "Slow Feed", "http://127.0.0.1:9/never", "media", 1, False)]
+    b.fetch = lambda url, timeout=1: (time.sleep(4), b"")[1]
+    try:
+        items, health = b.gather(24, budget=1)
+    finally:
+        b.FEEDS, b.fetch = orig_feeds, orig_fetch
+    return (items == [] and len(health) == 1 and health[0]["ok"] is False
+            and "Timeout" in health[0]["error"])
 
 
 def main():
@@ -75,6 +89,7 @@ def main():
                              [{"source": "x", "name": "X", "ok": True, "count": 1}], len(items))
     ok &= expect("<html" in html_out and "</html>" in html_out, "html renders")
     ok &= expect("{" not in html_out.split("<style>")[0], "no f-string leakage")
+    ok &= expect(test_budget_guard(), "slow feed hits the budget guard instead of hanging")
 
     print("\nALL PASS" if ok else "\nSOME FAILED")
     return 0 if ok else 1
