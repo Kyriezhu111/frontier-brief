@@ -231,6 +231,18 @@ def parse_feed(source_id, data):
     root = ElementTree.fromstring(data)
     entries = []
     nodes = list(root.iter("item")) or list(root.iter(NS + "entry"))
+    # Some feeds (e.g. generated digests) put no date on the items at all -
+    # fall back to the channel-level date so the entry is not silently dropped.
+    channel = root.find("channel")
+    if channel is None:
+        channel = root
+    feed_date = None
+    for tag in ("lastBuildDate", "pubDate", NS + "updated", "updated", DC + "date"):
+        found = find_child(channel, tag)
+        if found is not None:
+            feed_date = parse_date(text_of(found))
+            if feed_date:
+                break
     for node in nodes:
         title = clean_title(text_of(find_child(node, "title", NS + "title")))
         link = ""
@@ -248,6 +260,8 @@ def parse_feed(source_id, data):
             published = parse_date(text_of(find_child(node, tag)))
             if published:
                 break
+        if not published:
+            published = feed_date
         summary = strip_html(text_of(
             find_child(node, "description", NS + "summary", NS + "content", "content")))[:400]
         if title and link:
@@ -281,12 +295,21 @@ def gather(hours, per_feed_cap=40, budget=150):
     for fut in done:
         sid, name, url = futures[fut]
         ms = int((time.monotonic() - started[fut]) * 1000)
+        raw = b""
         try:
-            entries = parse_feed(sid, fut.result())
+            raw = fut.result()
+            entries = parse_feed(sid, raw)
         except Exception as exc:  # noqa: BLE001 - one bad feed must not kill the run
             health.append({"source": sid, "name": name, "ok": False, "parsed": 0,
                            "dated": 0, "fresh": 0, "count": 0, "ms": ms,
+                           "snippet": raw[:200].decode("utf-8", "replace").replace("\n", " "),
                            "error": f"{type(exc).__name__}: {exc}"})
+            continue
+        if not entries:
+            health.append({"source": sid, "name": name, "ok": False, "parsed": 0, "dated": 0,
+                           "fresh": 0, "count": 0, "ms": ms,
+                           "snippet": raw[:260].decode("utf-8", "replace").replace("\n", " "),
+                           "error": "parsed 0 entries (unexpected structure)"})
             continue
         dated = [e for e in entries if e["published"]]
         window = hours * WINDOW_MULT.get(CATEGORY.get(sid, ""), 1)
@@ -609,6 +632,8 @@ def main():
     for h in health:
         if not h["ok"]:
             print(f"  feed failed: {h['name']}: {h['error']}")
+            if h.get("snippet"):
+                print(f"    raw: {h['snippet']}")
 
 
 if __name__ == "__main__":
