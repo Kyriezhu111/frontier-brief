@@ -89,6 +89,11 @@ def main():
                   "english title needs translation")
     ok &= expect(b.needs_translation("华为发布新芯片技术") is False,
                   "chinese title is left alone")
+    ok &= expect(b.polish("人工智能代理的修复") == "AI智能体的修复", "glossary polish applied")
+    ok &= expect(b.clean_title("Sources: big AI news (Julie Bort/TechCrunch)") == "Sources: big AI news",
+                  "techmeme (Author/Outlet) suffix stripped")
+    ok &= expect(b.clean_title("A study of A/B testing") == "A study of A/B testing",
+                  "slash inside a title is not mistaken for attribution")
 
     now = datetime.now(timezone.utc)
 
