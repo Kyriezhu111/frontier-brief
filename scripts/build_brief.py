@@ -29,6 +29,7 @@ from xml.etree import ElementTree
 TZ = timezone(timedelta(hours=8))  # Asia/Shanghai
 NS = "{http://www.w3.org/2005/Atom}"
 DC = "{http://purl.org/dc/elements/1.1/}"
+RSS1 = "{http://purl.org/rss/1.0/}"
 UA = "Mozilla/5.0 (compatible; frontier-brief/1.0; +https://github.com/Kyriezhu111/frontier-brief)"
 ACCEPT = "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.8"
 
@@ -99,8 +100,6 @@ FEEDS = [
     ("quantamagazine", "Quanta Magazine", "https://www.quantamagazine.org/feed/", "science", 4, False),
     ("nature-main", "Nature", "https://www.nature.com/nature.rss", "science", 4, False),
     ("sciencedaily", "ScienceDaily", "https://www.sciencedaily.com/rss/all.xml", "science", 2, False),
-    # --- 学习：英语 ----------------------------------------------------------
-    ("voa-learning", "VOA Learning English", "https://learningenglish.voanews.com/api/zq$omekvi_", "study", 3, False),
 ]
 
 # Lab and analysis blogs publish every few days, not every few hours. With a
@@ -230,12 +229,12 @@ def clean_title(title):
 def parse_feed(source_id, data):
     root = ElementTree.fromstring(data)
     entries = []
-    nodes = list(root.iter("item")) or list(root.iter(NS + "entry"))
+    # RSS 2.0 / RSS 1.0 (rdf:RDF) / Atom - Nature uses RSS 1.0, most others 2.0.
+    nodes = (list(root.iter("item")) or list(root.iter(RSS1 + "item"))
+             or list(root.iter(NS + "entry")))
     # Some feeds (e.g. generated digests) put no date on the items at all -
     # fall back to the channel-level date so the entry is not silently dropped.
-    channel = root.find("channel")
-    if channel is None:
-        channel = root
+    channel = find_child(root, "channel", RSS1 + "channel") or root
     feed_date = None
     for tag in ("lastBuildDate", "pubDate", NS + "updated", "updated", DC + "date"):
         found = find_child(channel, tag)
@@ -244,9 +243,9 @@ def parse_feed(source_id, data):
             if feed_date:
                 break
     for node in nodes:
-        title = clean_title(text_of(find_child(node, "title", NS + "title")))
+        title = clean_title(text_of(find_child(node, "title", RSS1 + "title", NS + "title")))
         link = ""
-        link_node = find_child(node, "link", NS + "link")
+        link_node = find_child(node, "link", RSS1 + "link", NS + "link")
         if link_node is not None:
             link = (link_node.get("href") or "").strip() or text_of(link_node)
         if not link:
@@ -263,7 +262,8 @@ def parse_feed(source_id, data):
         if not published:
             published = feed_date
         summary = strip_html(text_of(
-            find_child(node, "description", NS + "summary", NS + "content", "content")))[:400]
+            find_child(node, "description", RSS1 + "description", NS + "summary",
+                       NS + "content", "content")))[:400]
         if title and link:
             entries.append({
                 "source": source_id, "title": title, "link": link,
