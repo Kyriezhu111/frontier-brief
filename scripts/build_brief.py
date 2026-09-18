@@ -218,14 +218,18 @@ def gather(hours, per_feed_cap=40):
             try:
                 entries = parse_feed(sid, fut.result())
             except Exception as exc:  # noqa: BLE001 - one bad feed must not kill the run
-                health.append({"source": sid, "name": name, "ok": False,
+                health.append({"source": sid, "name": name, "ok": False, "parsed": 0,
+                               "dated": 0, "fresh": 0, "count": 0,
                                "error": f"{type(exc).__name__}: {exc}"})
                 continue
-            fresh = [e for e in entries if e["published"] and e["published"] >= cutoff]
+            dated = [e for e in entries if e["published"]]
+            fresh = [e for e in dated if e["published"] >= cutoff]
             if AI_ONLY.get(sid):
                 fresh = [e for e in fresh if matches_ai(e["title"] + " " + e["summary"])]
             fresh = fresh[:per_feed_cap]
-            health.append({"source": sid, "name": name, "ok": True, "count": len(fresh)})
+            health.append({"source": sid, "name": name, "ok": True, "count": len(fresh),
+                           "parsed": len(entries), "dated": len(dated),
+                           "undated": len(entries) - len(dated), "fresh_pre_filter": None})
             for e in fresh:
                 e["url"] = url
                 items.append(e)
@@ -487,12 +491,14 @@ def main():
     with open(os.path.join(args.out, "index.html"), "w", encoding="utf-8") as fh:
         fh.write(render_index(dates))
 
-    counts = {sid: h.get("count", 0) for sid, h in
-              ((h["source"], h) for h in health) if h["ok"]}
     print(f"items={len(items)} clusters={len(clusters)} head={len(head)} cn={len(cn)} "
           f"research={len(research)} other={len(other)} feeds_ok={ok}/{len(health)}")
     print("head sources: " + ", ".join(c["primary"] for c in head))
-    print("kept per feed: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items()) if v))
+    print("per feed (parsed/dated/fresh):")
+    for h in sorted(health, key=lambda x: x["source"]):
+        flag = "  <-- NOTHING KEPT" if h["ok"] and h["count"] == 0 else ""
+        print(f"  {h['source']:<16} parsed={h.get('parsed', 0):<4} dated={h.get('dated', 0):<4} "
+              f"kept={h.get('count', 0):<4}{flag}")
     for h in health:
         if not h["ok"]:
             print(f"  feed failed: {h['name']}: {h['error']}")
