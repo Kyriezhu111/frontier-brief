@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Probe feed reachability from a GitHub Actions runner.
-
-Prints one line per URL: status, size, content-type, name, url.
-Feeds that come back 200 with an XML/HTML body are usable; the rest get dropped.
-"""
+"""Probe non-AI candidate feeds from a runner."""
 import concurrent.futures
 import urllib.error
 import urllib.request
@@ -12,20 +8,31 @@ UA = "Mozilla/5.0 (compatible; frontier-brief/1.0; +https://github.com/Kyriezhu1
 ACCEPT = "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.8"
 
 FEEDS = [
-    ("anthropic-openrss-rss", "https://openrss.org/rss/www.anthropic.com/news"),
-    ("anthropic-rsshub-pseudoyu", "https://rsshub.pseudoyu.com/anthropic/news"),
-    ("anthropic-rsshub-feeded", "https://rsshub.feeded.xyz/anthropic/news"),
-    ("hn-anthropic", "https://hnrss.org/newest?q=Anthropic&points=30"),
-    ("hn-grok", "https://hnrss.org/newest?q=Grok&points=30"),
-    ("hn-deepseek", "https://hnrss.org/newest?q=DeepSeek&points=20"),
-    ("techmeme", "https://www.techmeme.com/feed.xml"),
-    ("verge-ai", "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml"),
-    ("mit-news-ai", "https://news.mit.edu/rss/topic/artificial-intelligence2"),
-    ("stanford-hai", "https://hai.stanford.edu/news/rss.xml"),
-    ("epoch-ai", "https://epoch.ai/blog/rss.xml"),
-    ("github-trending-daily", "https://mshibanami.github.io/GitHubTrendingRSS/daily/python.xml"),
-    ("arxiv-stat-ml", "https://export.arxiv.org/rss/stat.ML"),
-    ("hn-frontpage-150", "https://hnrss.org/frontpage?points=150"),
+    ("nature-photonics", "https://www.nature.com/nphoton.rss"),
+    ("nature-electronics", "https://www.nature.com/nelectr.rss"),
+    ("physicsworld", "https://physicsworld.com/feed/"),
+    ("photonics-com", "https://www.photonics.com/rss/"),
+    ("semiengineering", "https://semiengineering.com/feed/"),
+    ("eetimes", "https://www.eetimes.com/feed/"),
+    ("tomshardware", "https://www.tomshardware.com/feeds/all"),
+    ("phys-org-tech", "https://phys.org/rss-feed/technology-news/"),
+    ("arxiv-optics", "https://export.arxiv.org/rss/physics.optics"),
+    ("arxiv-appph", "https://export.arxiv.org/rss/physics.app-ph"),
+    ("nofilmschool", "https://nofilmschool.com/feed"),
+    ("petapixel", "https://petapixel.com/feed/"),
+    ("fstoppers", "https://fstoppers.com/feed"),
+    ("diyphotography", "https://www.diyphotography.net/feed/"),
+    ("provideocoalition", "https://www.provideocoalition.com/feed/"),
+    ("newsshooter", "https://www.newsshooter.com/feed"),
+    ("redsharknews", "https://www.redsharknews.com/rss"),
+    ("github-trending-all", "https://mshibanami.github.io/GitHubTrendingRSS/daily/all.xml"),
+    ("quantamagazine", "https://www.quantamagazine.org/feed/"),
+    ("sciencedaily", "https://www.sciencedaily.com/rss/all.xml"),
+    ("voa-learning-english", "https://learningenglish.voanews.com/api/zq$omekvi_"),
+    ("nature-main", "https://www.nature.com/nature.rss"),
+    ("guardian-education", "https://www.theguardian.com/education/rss"),
+    ("hackaday", "https://hackaday.com/blog/feed/"),
+    ("musicradar", "https://www.musicradar.com/feeds/all"),
 ]
 
 
@@ -34,15 +41,22 @@ def probe(item):
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": ACCEPT})
     try:
         with urllib.request.urlopen(req, timeout=25) as resp:
-            body = resp.read(6000)
+            body = resp.read(8000)
             ctype = resp.headers.get("Content-Type", "?")
-            head = body.lstrip()[:80].decode("utf-8", "replace").replace("\n", " ")
-            looks_xml = body.lstrip()[:1] == b"<"
-            return f"OK   {resp.status}  {len(body):>6}B  xml={str(looks_xml):<5} {ctype:<38} {name:<18} {url}\n     head: {head}"
+            kind = "FEED" if ("xml" in ctype or "rss" in ctype or "atom" in ctype) else "HTML?"
+            n = max(body.count(b"<item"), body.count(b"<entry"))
+            newest = b""
+            for tag in (b"<pubDate>", b"<updated>", b"<published>"):
+                i = body.find(tag)
+                if i >= 0:
+                    newest = body[i:i + 60]
+                    break
+            return (f"{kind:<5} {resp.status} {n:>3}items {ctype[:32]:<32} {name:<22} "
+                    f"{url}\n      {newest.decode('utf-8', 'replace')}")
     except urllib.error.HTTPError as e:
-        return f"FAIL {e.code}           HTTPError                        {name:<18} {url}"
-    except Exception as e:  # noqa: BLE001 - probe should never raise
-        return f"FAIL ---           {type(e).__name__:<32} {name:<18} {url}"
+        return f"FAIL  {e.code}                                  {name:<22} {url}"
+    except Exception as e:  # noqa: BLE001
+        return f"FAIL  ---  {type(e).__name__:<30} {name:<22} {url}"
 
 
 def main():
