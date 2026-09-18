@@ -1,0 +1,41 @@
+name: daily-brief
+
+on:
+  schedule:
+    # 23:17 UTC = 07:17 Asia/Shanghai. Off the top of the hour on purpose:
+    # GitHub's scheduler is congested at :00 and can be late by 10-40 min.
+    - cron: "17 23 * * *"
+  workflow_dispatch:
+    inputs:
+      hours:
+        description: "回看窗口（小时）"
+        default: "36"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-brief
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build brief
+        run: python3 scripts/build_brief.py --hours "${{ github.event.inputs.hours || '36' }}"
+
+      - name: Publish to docs/
+        run: |
+          git config user.name "frontier-brief"
+          git config user.email "actions@users.noreply.github.com"
+          git add docs
+          if git diff --cached --quiet; then
+            echo "no change"
+          else
+            git commit -m "brief: $(TZ=Asia/Shanghai date +%F)"
+            git push
+          fi
