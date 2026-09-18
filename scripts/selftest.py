@@ -76,6 +76,15 @@ def main():
     ok &= expect(r1 and r1[0]["published"] is not None, "rss 1.0 dc:date parses")
     ok &= expect(r1[1]["published"] is not None, "undated item falls back to channel date")
 
+    ok &= expect(b.keyword_hit("Anki", "lige-gr ranking to generative recommendation") is False,
+                  "ascii keyword does not match inside another word")
+    ok &= expect(b.keyword_hit("Anki", "spaced repetition with anki today") is True,
+                  "ascii keyword matches on word boundary")
+    ok &= expect(b.keyword_hit("Agent", "rogue agents everywhere") is True,
+                  "ascii keyword allows plural")
+    ok &= expect(b.keyword_hit("光电", "我院光电信息科学与工程专业") is True,
+                  "cjk keyword matches as substring")
+
     now = datetime.now(timezone.utc)
 
     def mk(source, hours_ago, title):
