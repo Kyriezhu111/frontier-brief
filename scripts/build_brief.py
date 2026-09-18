@@ -18,7 +18,9 @@ import html
 import json
 import os
 import re
+import socket
 import sys
+import time
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -29,6 +31,13 @@ NS = "{http://www.w3.org/2005/Atom}"
 DC = "{http://purl.org/dc/elements/1.1/}"
 UA = "Mozilla/5.0 (compatible; frontier-brief/1.0; +https://github.com/Kyriezhu111/frontier-brief)"
 ACCEPT = "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.8"
+
+# urlopen(timeout=) only bounds connect + first byte. A server that trickles a
+# response can stall a read forever - which hung a real CI run. A socket-level
+# default timeout applies to every recv, so a stalled feed dies instead of
+# freezing the whole job.
+SOCKET_TIMEOUT = 25
+socket.setdefaulttimeout(SOCKET_TIMEOUT)
 
 # id, display name, url, category, weight, ai_only
 FEEDS = [
@@ -124,7 +133,7 @@ def matches_ai(text):
 # --------------------------------------------------------------------------- #
 # fetching and parsing
 # --------------------------------------------------------------------------- #
-def fetch(url, timeout=30):
+def fetch(url, timeout=SOCKET_TIMEOUT):
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": ACCEPT})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read()
@@ -208,31 +217,48 @@ def parse_feed(source_id, data):
     return entries
 
 
-def gather(hours, per_feed_cap=40):
+def gather(hours, per_feed_cap=40, budget=150):
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
     items, health = [], []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
-        futures = {pool.submit(fetch, url): (sid, name, url) for sid, name, url, _, _, _ in FEEDS}
-        for fut in concurrent.futures.as_completed(futures):
-            sid, name, url = futures[fut]
-            try:
-                entries = parse_feed(sid, fut.result())
-            except Exception as exc:  # noqa: BLE001 - one bad feed must not kill the run
-                health.append({"source": sid, "name": name, "ok": False, "parsed": 0,
-                               "dated": 0, "fresh": 0, "count": 0,
-                               "error": f"{type(exc).__name__}: {exc}"})
-                continue
-            dated = [e for e in entries if e["published"]]
-            fresh = [e for e in dated if e["published"] >= cutoff]
-            if AI_ONLY.get(sid):
-                fresh = [e for e in fresh if matches_ai(e["title"] + " " + e["summary"])]
-            fresh = fresh[:per_feed_cap]
-            health.append({"source": sid, "name": name, "ok": True, "count": len(fresh),
-                           "parsed": len(entries), "dated": len(dated),
-                           "undated": len(entries) - len(dated), "fresh_pre_filter": None})
-            for e in fresh:
-                e["url"] = url
-                items.append(e)
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=10)
+    started = {}
+    futures = {}
+    for sid, name, url, _, _, _ in FEEDS:
+        fut = pool.submit(fetch, url)
+        futures[fut] = (sid, name, url)
+        started[fut] = time.monotonic()
+
+    done, pending = concurrent.futures.wait(futures, timeout=budget)
+    for fut in pending:
+        sid, name, url = futures[fut]
+        fut.cancel()
+        health.append({"source": sid, "name": name, "ok": False, "parsed": 0, "dated": 0,
+                       "fresh": 0, "count": 0, "ms": int(budget * 1000),
+                       "error": f"Timeout: exceeded {budget}s budget"})
+    pool.shutdown(wait=False, cancel_futures=True)
+
+    for fut in done:
+        sid, name, url = futures[fut]
+        ms = int((time.monotonic() - started[fut]) * 1000)
+        try:
+            entries = parse_feed(sid, fut.result())
+        except Exception as exc:  # noqa: BLE001 - one bad feed must not kill the run
+            health.append({"source": sid, "name": name, "ok": False, "parsed": 0,
+                           "dated": 0, "fresh": 0, "count": 0, "ms": ms,
+                           "error": f"{type(exc).__name__}: {exc}"})
+            continue
+        dated = [e for e in entries if e["published"]]
+        fresh = [e for e in dated if e["published"] >= cutoff]
+        pre_filter = len(fresh)
+        if AI_ONLY.get(sid):
+            fresh = [e for e in fresh if matches_ai(e["title"] + " " + e["summary"])]
+        fresh = fresh[:per_feed_cap]
+        health.append({"source": sid, "name": name, "ok": True, "count": len(fresh),
+                       "parsed": len(entries), "dated": len(dated),
+                       "fresh_all": pre_filter, "ms": ms})
+        for e in fresh:
+            e["url"] = url
+            items.append(e)
     items.sort(key=lambda x: x["published"], reverse=True)
     return items, health
 
@@ -498,7 +524,10 @@ def main():
     for h in sorted(health, key=lambda x: x["source"]):
         flag = "  <-- NOTHING KEPT" if h["ok"] and h["count"] == 0 else ""
         print(f"  {h['source']:<16} parsed={h.get('parsed', 0):<4} dated={h.get('dated', 0):<4} "
-              f"kept={h.get('count', 0):<4}{flag}")
+              f"in_window={h.get('fresh_all', 0):<4} kept={h.get('count', 0):<4} "
+              f"{h.get('ms', 0):>6}ms{flag}")
+    slow = sorted((h for h in health if h["ok"]), key=lambda x: -x.get("ms", 0))[:5]
+    print("slowest feeds: " + ", ".join(f"{h['source']}={h['ms']}ms" for h in slow))
     for h in health:
         if not h["ok"]:
             print(f"  feed failed: {h['name']}: {h['error']}")
