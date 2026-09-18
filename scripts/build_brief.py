@@ -43,10 +43,9 @@ socket.setdefaulttimeout(SOCKET_TIMEOUT)
 FEEDS = [
     # --- labs: first-hand ---------------------------------------------------
     ("openai", "OpenAI", "https://openai.com/news/rss.xml", "lab", 4, False),
-    ("anthropic", "Anthropic", "https://openrss.org/rss/www.anthropic.com/news", "lab", 4, False),
     ("google-ai", "Google AI", "https://blog.google/technology/ai/rss/", "lab", 4, False),
     ("deepmind", "DeepMind", "https://deepmind.google/blog/rss.xml", "lab", 4, False),
-    ("google-research", "Google Research", "https://research.google/blog/rss/", "lab", 3, True),
+    ("google-research", "Google Research", "https://research.google/blog/rss/", "lab", 3, False),
     ("huggingface", "Hugging Face", "https://huggingface.co/blog/feed.xml", "lab", 3, False),
     ("nvidia", "NVIDIA", "https://developer.nvidia.com/blog/feed/", "lab", 2, True),
     ("aws-ml", "AWS ML", "https://aws.amazon.com/blogs/machine-learning/feed/", "lab", 2, True),
@@ -57,7 +56,6 @@ FEEDS = [
     ("wired", "WIRED", "https://www.wired.com/feed/tag/ai/latest/rss", "media", 3, True),
     ("mit-tr", "MIT Tech Review", "https://www.technologyreview.com/feed/", "media", 3, True),
     ("ieee", "IEEE Spectrum", "https://spectrum.ieee.org/feeds/topic/artificial-intelligence.rss", "media", 3, True),
-    ("theregister", "The Register", "https://www.theregister.com/software/ai_ml/headlines.atom", "media", 2, True),
     ("techmeme", "Techmeme", "https://www.techmeme.com/feed.xml", "media", 5, True),
     ("semianalysis", "SemiAnalysis", "https://semianalysis.com/feed/", "media", 4, True),
     ("mit-news", "MIT News AI", "https://news.mit.edu/rss/topic/artificial-intelligence2", "media", 3, True),
@@ -66,7 +64,6 @@ FEEDS = [
     ("latent", "Latent Space", "https://www.latent.space/feed", "analysis", 4, True),
     ("interconnects", "Interconnects", "https://www.interconnects.ai/feed", "analysis", 4, True),
     ("raschka", "Sebastian Raschka", "https://magazine.sebastianraschka.com/feed", "analysis", 3, True),
-    ("synced", "Synced", "https://syncedreview.com/feed/", "analysis", 3, True),
     ("github-blog", "GitHub Blog", "https://github.blog/feed/", "analysis", 2, True),
     # --- community ----------------------------------------------------------
     ("hn", "Hacker News", "https://hnrss.org/frontpage?points=150", "community", 3, True),
@@ -75,14 +72,18 @@ FEEDS = [
     ("arxiv-ai", "arXiv cs.AI", "https://export.arxiv.org/rss/cs.AI", "research", 1, False),
     ("arxiv-cl", "arXiv cs.CL", "https://export.arxiv.org/rss/cs.CL", "research", 1, False),
     ("arxiv-lg", "arXiv cs.LG", "https://export.arxiv.org/rss/cs.LG", "research", 1, False),
-    ("bair", "BAIR Berkeley", "https://bair.berkeley.edu/blog/feed.xml", "research", 2, False),
     # --- Chinese sources (runner reaches them; the user's machine does not) --
     ("qbitai", "量子位", "https://www.qbitai.com/feed", "cn", 3, False),
     ("ithome", "IT之家", "https://www.ithome.com/rss/", "cn", 2, True),
     ("infoq-cn", "InfoQ 中文", "https://www.infoq.cn/feed", "cn", 2, True),
     ("sspai", "少数派", "https://sspai.com/feed", "cn", 2, True),
-    ("ruanyifeng", "阮一峰", "https://www.ruanyifeng.com/blog/atom.xml", "cn", 3, True),
+    ("ruanyifeng", "阮一峰", "https://www.ruanyifeng.com/blog/atom.xml", "cn", 3, False),
 ]
+
+# Lab and analysis blogs publish every few days, not every few hours. With a
+# plain 36-48h window they would almost never appear; recency scoring still
+# keeps them out of the top section.
+WINDOW_MULT = {"lab": 4, "analysis": 4}
 
 CATEGORY_LABEL = {
     "lab": "实验室一手", "media": "科技媒体", "analysis": "从业者分析",
@@ -223,7 +224,7 @@ def parse_feed(source_id, data):
 
 
 def gather(hours, per_feed_cap=40, budget=150):
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    now = datetime.now(timezone.utc)
     items, health = [], []
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=10)
     started = {}
@@ -253,7 +254,8 @@ def gather(hours, per_feed_cap=40, budget=150):
                            "error": f"{type(exc).__name__}: {exc}"})
             continue
         dated = [e for e in entries if e["published"]]
-        fresh = [e for e in dated if e["published"] >= cutoff]
+        window = hours * WINDOW_MULT.get(CATEGORY.get(sid, ""), 1)
+        fresh = [e for e in dated if e["published"] >= now - timedelta(hours=window)]
         pre_filter = len(fresh)
         if AI_ONLY.get(sid):
             fresh = [e for e in fresh if matches_ai(e["title"] + " " + e["summary"])]
