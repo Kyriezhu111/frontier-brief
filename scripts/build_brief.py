@@ -253,6 +253,9 @@ def parse_date(value):
 def clean_title(title):
     title = strip_html(title)
     title = re.sub(r"\s*\(arXiv:[\d.]+v?\d*\s*\[[^\]]*\]\)\s*$", "", title)
+    # Techmeme embeds "(Author/Outlet)" in the headline. Drop it before
+    # translating - it adds nothing to read and wrecks the machine translation.
+    title = re.sub(r"\s*\([^()]*\/[^()]*\)\s*$", "", title)
     title = re.sub(r"\s*\((?:www\.)?[a-z0-9.-]+\.[a-z]{2,}\)\s*$", "", title)
     title = re.sub(r"^(Show HN|Ask HN):\s*", "", title, flags=re.I)
     return title.strip()
@@ -534,6 +537,23 @@ def needs_translation(title):
     return not re.search(r"[\u4e00-\u9fff]", title or "")
 
 
+# Machine translation keeps saying 人工智能/代理/特工. Applied at render time,
+# so glossary tweaks take effect immediately without re-translating anything.
+GLOSSARY = [
+    ("人工智能", "AI"),
+    ("大型语言模型", "大模型"),
+    ("代理", "智能体"),
+    ("特工", "智能体"),
+]
+
+
+def polish(zh):
+    out = zh or ""
+    for src, dst in GLOSSARY:
+        out = out.replace(src, dst)
+    return out
+
+
 def load_cache(path):
     try:
         with open(path, encoding="utf-8") as fh:
@@ -640,7 +660,7 @@ def render_items(clusters, limit=None):
     out = []
     for c in (clusters[:limit] if limit else clusters):
         primary = c.get("primary_item") or max(c["items"], key=lambda i: WEIGHT.get(i["source"], 1))
-        title = c.get("zh") or primary["title"]
+        title = polish(c.get("zh")) or primary["title"]
         original = (f'<div class="orig">{esc(primary["title"])}</div>'
                     if c.get("zh") and needs_translation(primary["title"]) else "")
         badges = []
@@ -704,7 +724,7 @@ def render_index(dates):
 def render_markdown(today, personal, head, buckets, other, total_items, ok, total_feeds):
     def line(c):
         primary = c.get("primary_item") or max(c["items"], key=lambda i: WEIGHT.get(i["source"], 1))
-        title = c.get("zh") or primary["title"]
+        title = polish(c.get("zh")) or primary["title"]
         tag = f"[{c['distinct']} 家源] " if c["distinct"] >= 2 else ""
         kw = f" ★{','.join(c['keywords'])}" if c["keywords"] else ""
         row = f"- {tag}[{title}]({primary['link']}) — {' / '.join(sorted(c['sources']))}{kw}"
