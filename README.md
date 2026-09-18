@@ -9,6 +9,7 @@
 - GitHub Actions 每天 07:17（北京时间）运行 `scripts/build_brief.py`
 - 直连 **48 个墙外一手源**，跑在 GitHub 的服务器上，因此**不需要你自己的电脑开机，也不需要代理**
 - 排序核心是**交叉印证**：同一条新闻被越多独立来源报道，排名越靠前（标 `N 家源`）
+- **英文标题自动译成中文**：中文在上、英文原题在下方小字（保留原题，方便核对与搜索）
 - 结果写进 `docs/`，由 GitHub Pages 发布，往期自动存档
 
 ## 分区
@@ -38,6 +39,8 @@ Lobsters 等源参与"值得看"与"其他"的排序。
 | 增删分区 | `SECTION_ORDER`（分区顺序与每区条数上限） |
 | 调头条手感 | `pick_head()` 的 `per_source_cap` / `threshold`，`NEWS_CATS` |
 | 立刻重跑 | Actions → daily-brief → Run workflow（可填回看小时数） |
+| 改译名/术语 | `build_brief.py` 里的 `GLOSSARY`（在渲染时生效，改完无需重新翻译） |
+| 提高翻译配额 | 仓库 Secret 加 `MYMEMORY_EMAIL`（填邮箱可把每日额度从匿名档提高） |
 
 ## 本地验证
 
@@ -51,6 +54,9 @@ python3 scripts/selftest.py
 ## 维护须知
 
 - **判断一个源是否死亡要看完整年份**：曾经把"最新条目停在 2025-09"的源误判成"今天没更新"。
+- **翻译**用 MyMemory 免费接口（Google 的免费端点在 CI 出口 IP 上恒返回 429）。
+  只有真正会显示的约 70 条标题会被翻译，译文按标题原文缓存在 `data/translations.json`，
+  跨天复用——所以日常运行通常只需要翻译新增的几条，额度压力很小。
 - 新增源前先跑 `scripts/probe_feeds.py`（Actions → probe-feeds），它会打印每个 URL 的
   状态码、条目数和内容类型——**在本地猜是猜不出来的**。
 - GitHub 的 cron 在整点最拥堵，所以定在 `17 23 * * *`（UTC）。
