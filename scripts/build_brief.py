@@ -138,10 +138,20 @@ def matches_research(text):
 # --------------------------------------------------------------------------- #
 # fetching and parsing
 # --------------------------------------------------------------------------- #
-def fetch(url, timeout=SOCKET_TIMEOUT):
-    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": ACCEPT})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return resp.read()
+def fetch(url, timeout=SOCKET_TIMEOUT, attempts=3):
+    """Feeds occasionally fail with a transient TLS/connect timeout; one flaky
+    handshake should not cost us a whole source for the day."""
+    last = None
+    for attempt in range(attempts):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": ACCEPT})
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.read()
+        except Exception as exc:  # noqa: BLE001 - retried, then re-raised
+            last = exc
+            if attempt < attempts - 1:
+                time.sleep(1.5 * (attempt + 1))
+    raise last
 
 
 def text_of(node):
