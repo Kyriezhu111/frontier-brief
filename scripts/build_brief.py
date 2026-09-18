@@ -177,6 +177,20 @@ def matches_optics(text):
     return any(t in low for t in OPTICS_TERMS)
 
 
+def keyword_hit(keyword, blob):
+    """CJK: plain substring. ASCII: word-boundary, plural allowed.
+
+    Without the boundary check "Anki" matches "r-anki-ng" and every
+    recommendation paper gets tagged as the reader's interest.
+    """
+    kw = (keyword or "").lower()
+    if not kw:
+        return False
+    if re.search(r"[\u4e00-\u9fff]", kw):
+        return kw in blob
+    return re.search(r"(?<![a-z0-9])" + re.escape(kw) + r"s?(?![a-z0-9])", blob) is not None
+
+
 # --------------------------------------------------------------------------- #
 # fetching and parsing
 # --------------------------------------------------------------------------- #
@@ -337,7 +351,7 @@ def gather(hours, per_feed_cap=40, budget=150):
         elif CATEGORY.get(sid) == "research":
             fresh = [e for e in fresh if matches_research(e["title"] + " " + e["summary"])]
         elif sid in OPTICS_ONLY:
-            fresh = [e for e in fresh if matches_optics(e["title"] + " " + e["summary"])]
+            fresh = [e for e in fresh if matches_optics(e["title"])]
         fresh = fresh[:per_feed_cap]
         newest = max((e["published"] for e in dated), default=None)
         health.append({"source": sid, "name": name, "ok": True, "count": len(fresh),
@@ -411,7 +425,7 @@ def score_cluster(c, keywords):
     # Title only: summaries drag in unrelated body text and produce false
     # "关注：芯片" tags on articles that merely mention the word once.
     blob = " ".join(i["title"] for i in c["items"]).lower()
-    c["keywords"] = [k for k in keywords if k.lower() in blob]
+    c["keywords"] = [k for k in keywords if keyword_hit(k, blob)]
     if c["keywords"]:
         score += 6.0
     c["score"] = score
