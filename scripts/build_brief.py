@@ -59,7 +59,6 @@ FEEDS = [
     ("techmeme", "Techmeme", "https://www.techmeme.com/feed.xml", "media", 5, True),
     ("mit-news", "MIT News AI", "https://news.mit.edu/rss/topic/artificial-intelligence2", "media", 3, False),
     # --- practitioner analysis ---------------------------------------------
-    ("semianalysis", "SemiAnalysis", "https://semianalysis.com/feed/", "analysis", 4, False),
     ("simonwillison", "Simon Willison", "https://simonwillison.net/atom/everything/", "analysis", 4, False),
     ("latent", "Latent Space", "https://www.latent.space/feed", "analysis", 4, False),
     ("interconnects", "Interconnects", "https://www.interconnects.ai/feed", "analysis", 4, False),
