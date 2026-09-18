@@ -23,6 +23,21 @@ ARXIV = """<?xml version="1.0"?><rss version="2.0"><channel>
 <pubDate>Thu, 18 Sep 2026 02:00:00 GMT</pubDate><description>abstract text</description></item>
 </channel></rss>"""
 
+# Nature serves RSS 1.0 (rdf:RDF) - a format that silently yielded 0 entries
+# until the parser learned about the RSS 1.0 namespace.
+RSS1_FEED = """<?xml version="1.0"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:dc="http://purl.org/dc/elements/1.1/"
+         xmlns="http://purl.org/rss/1.0/">
+  <channel rdf:about="https://example.org/"><title>Nature</title>
+    <dc:date>2026-09-18T01:00:00Z</dc:date></channel>
+  <item rdf:about="https://example.org/a1"><title>Photonic chip breakthrough</title>
+    <link>https://example.org/a1</link><dc:date>2026-09-17T20:00:00Z</dc:date>
+    <description>desc</description></item>
+  <item rdf:about="https://example.org/a2"><title>Undated digest entry</title>
+    <link>https://example.org/a2</link><description>desc</description></item>
+</rdf:RDF>"""
+
 
 def expect(cond, label):
     print(("PASS  " if cond else "FAIL  ") + label)
@@ -47,6 +62,7 @@ def main():
     rss = b.parse_feed("techcrunch", RSS)
     atom = b.parse_feed("verge", ATOM)
     arx = b.parse_feed("arxiv-ai", ARXIV)
+    r1 = b.parse_feed("nature-main", RSS1_FEED)
 
     ok &= expect(len(rss) == 1 and rss[0]["title"] == "Hello RSS", "rss 2.0 parses")
     ok &= expect(rss[0]["published"] is not None, "rss pubDate parses")
@@ -55,6 +71,10 @@ def main():
     ok &= expect(atom and atom[0]["link"] == "https://example.com/a", "atom link found")
     ok &= expect(atom and atom[0]["published"] is not None, "atom updated parses")
     ok &= expect(arx and arx[0]["title"] == "Scaling Laws Revisited", "arxiv suffix stripped")
+    ok &= expect(len(r1) == 2, "rss 1.0 (rdf:RDF) items parse")
+    ok &= expect(r1 and r1[0]["link"] == "https://example.org/a1", "rss 1.0 link found")
+    ok &= expect(r1 and r1[0]["published"] is not None, "rss 1.0 dc:date parses")
+    ok &= expect(r1[1]["published"] is not None, "undated item falls back to channel date")
 
     now = datetime.now(timezone.utc)
 
