@@ -21,6 +21,7 @@ import re
 import socket
 import sys
 import time
+import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -519,6 +520,91 @@ def build_sections(clusters, keywords):
 
 
 # --------------------------------------------------------------------------- #
+# translation
+#
+# Google's free endpoint answers 429 from GitHub runner IPs, MyMemory does not
+# and returns good Chinese. Only the ~70 titles that actually get rendered are
+# translated, and results are cached across runs by exact title.
+# --------------------------------------------------------------------------- #
+TRANSLATE_URL = "https://api.mymemory.translated.net/get"
+TRANSLATE_PAIR = "en|zh-CN"
+
+
+def needs_translation(title):
+    return not re.search(r"[\u4e00-\u9fff]", title or "")
+
+
+def load_cache(path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except Exception:  # noqa: BLE001 - a missing/corrupt cache is not fatal
+        return {}
+
+
+def save_cache(path, cache, cap=4000):
+    if len(cache) > cap:
+        for key in list(cache)[:len(cache) - cap]:
+            cache.pop(key, None)
+    directory = os.path.dirname(path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(cache, fh, ensure_ascii=False, indent=0, sort_keys=True)
+
+
+def translate_one(text, email=""):
+    params = {"langpair": TRANSLATE_PAIR, "q": text}
+    if email:
+        params["de"] = email
+    url = TRANSLATE_URL + "?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    if data.get("responseStatus") != 200:
+        raise RuntimeError(f"status {data.get('responseStatus')}")
+    out = html.unescape(str(data.get("responseData", {}).get("translatedText", ""))).strip()
+    if not out or "MYMEMORY WARNING" in out.upper() or out.lower() == text.lower():
+        raise RuntimeError("no usable translation")
+    return out
+
+
+def translate_missing(titles, cache, workers=4):
+    todo = sorted(t for t in titles if t and t not in cache and needs_translation(t))
+    if not todo:
+        return 0, 0
+    email = os.environ.get("MYMEMORY_EMAIL", "")
+    done = 0
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(translate_one, t, email): t for t in todo}
+        for fut in concurrent.futures.as_completed(futures):
+            title = futures[fut]
+            try:
+                cache[title] = fut.result()
+                done += 1
+            except Exception as exc:  # noqa: BLE001 - keep the English title
+                print(f"  translate failed ({exc}): {title[:60]}", file=sys.stderr)
+    return done, len(todo)
+
+
+def attach_translations(clusters, cache):
+    """Chinese first, original English kept underneath so nothing is lost."""
+    wanted = set()
+    for c in clusters:
+        primary = max(c["items"], key=lambda i: WEIGHT.get(i["source"], 1))
+        c["primary_item"] = primary
+        c["zh"] = cache.get(primary["title"], "")
+        if not c["zh"] and needs_translation(primary["title"]):
+            wanted.add(primary["title"])
+    done, attempted = translate_missing(wanted, cache)
+    for c in clusters:
+        if not c["zh"]:
+            c["zh"] = cache.get(c["primary_item"]["title"], "")
+    return done, attempted
+
+
+# --------------------------------------------------------------------------- #
 # rendering
 # --------------------------------------------------------------------------- #
 CSS = """
@@ -540,6 +626,7 @@ h2{font-size:13px;letter-spacing:.14em;color:#8b94a7;font-weight:600;text-transf
        padding:1px 6px;font-size:11px;margin-right:6px;vertical-align:1px}
 .kw{background:#2a2140;color:#c4a8ff}
 .you{color:#c4a8ff;border-bottom-color:#2a2140}
+.orig{margin-top:4px;color:#6b7484;font-size:13px;line-height:1.45}
 footer{margin-top:44px;padding-top:16px;border-top:1px solid #1e2431;color:#6b7484;font-size:12.5px}
 .empty{color:#8b94a7;font-size:14px}
 """
@@ -552,7 +639,10 @@ def esc(s):
 def render_items(clusters, limit=None):
     out = []
     for c in (clusters[:limit] if limit else clusters):
-        primary = max(c["items"], key=lambda i: WEIGHT.get(i["source"], 1))
+        primary = c.get("primary_item") or max(c["items"], key=lambda i: WEIGHT.get(i["source"], 1))
+        title = c.get("zh") or primary["title"]
+        original = (f'<div class="orig">{esc(primary["title"])}</div>'
+                    if c.get("zh") and needs_translation(primary["title"]) else "")
         badges = []
         if c["distinct"] >= 2:
             badges.append(f'<span class="badge">{c["distinct"]} 家源</span>')
@@ -562,7 +652,8 @@ def render_items(clusters, limit=None):
         local = c["newest"].astimezone(TZ).strftime("%m-%d %H:%M")
         out.append(
             '<div class="item">'
-            f'<a href="{esc(primary["link"])}" target="_blank" rel="noopener">{esc(primary["title"])}</a>'
+            f'<a href="{esc(primary["link"])}" target="_blank" rel="noopener">{esc(title)}</a>'
+            f"{original}"
             f'<div class="meta">{"".join(badges)}<span class="src">{esc(srcs)}</span> · {local}</div>'
             "</div>"
         )
@@ -612,10 +703,14 @@ def render_index(dates):
 
 def render_markdown(today, personal, head, buckets, other, total_items, ok, total_feeds):
     def line(c):
-        primary = max(c["items"], key=lambda i: WEIGHT.get(i["source"], 1))
+        primary = c.get("primary_item") or max(c["items"], key=lambda i: WEIGHT.get(i["source"], 1))
+        title = c.get("zh") or primary["title"]
         tag = f"[{c['distinct']} 家源] " if c["distinct"] >= 2 else ""
         kw = f" ★{','.join(c['keywords'])}" if c["keywords"] else ""
-        return f"- {tag}[{primary['title']}]({primary['link']}) — {' / '.join(sorted(c['sources']))}{kw}"
+        row = f"- {tag}[{title}]({primary['link']}) — {' / '.join(sorted(c['sources']))}{kw}"
+        if c.get("zh") and needs_translation(primary["title"]):
+            row += f"\n  原题：{primary['title']}"
+        return row
 
     out = [f"# 前沿简报 · {today}", "",
            f"墙外一手源直采 · {total_items} 条信号 · 采集源 {ok}/{total_feeds} 正常", ""]
@@ -634,6 +729,8 @@ def main():
     ap.add_argument("--hours", type=int, default=36)
     ap.add_argument("--out", default="docs")
     ap.add_argument("--keywords", default="")
+    ap.add_argument("--cache", default="data/translations.json")
+    ap.add_argument("--no-translate", action="store_true")
     args = ap.parse_args()
 
     keywords = [k.strip() for k in args.keywords.split(",") if k.strip()]
@@ -650,6 +747,16 @@ def main():
     items, health = gather(args.hours)
     clusters = [score_cluster(c, keywords) for c in cluster(items)]
     personal, head, buckets, other = build_sections(clusters, keywords)
+
+    displayed = personal + head + [c for _, g in buckets for c in g] + other[:14]
+    if args.no_translate:
+        for c in displayed:
+            c["primary_item"] = max(c["items"], key=lambda i: WEIGHT.get(i["source"], 1))
+        done = attempted = 0
+    else:
+        cache = load_cache(args.cache)
+        done, attempted = attach_translations(displayed, cache)
+        save_cache(args.cache, cache)
 
     today = datetime.now(TZ).strftime("%Y-%m-%d")
     ok = sum(1 for h in health if h["ok"])
@@ -668,6 +775,9 @@ def main():
 
     print(f"items={len(items)} clusters={len(clusters)} personal={len(personal)} "
           f"head={len(head)} other={len(other)} feeds_ok={ok}/{len(health)}")
+    zh_ready = sum(1 for c in displayed if c.get("zh"))
+    print(f"translated: {done}/{attempted} new this run, {zh_ready}/{len(displayed)} "
+          f"displayed items have Chinese")
     print("sections: " + ", ".join(f"{label}={len(g)}" for label, g in buckets))
     print("head sources: " + ", ".join(c["primary"] for c in head))
     print("per feed (parsed/dated/fresh):")
