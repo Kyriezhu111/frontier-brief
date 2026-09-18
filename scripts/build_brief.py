@@ -342,7 +342,7 @@ def score_cluster(c, keywords):
     return c
 
 
-def pick_head(clusters, limit=10, per_source_cap=2, threshold=5.5):
+def pick_head(clusters, limit=10, per_source_cap=3, threshold=5.5):
     """Corroborated stories first, then strong single-source ones - but no
     outlet may take more than `per_source_cap` slots (kills the
     corporate-blog flood)."""
