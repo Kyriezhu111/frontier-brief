@@ -1,0 +1,13 @@
+name: probe-feeds
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe feed reachability
+        run: python3 scripts/probe_feeds.py
