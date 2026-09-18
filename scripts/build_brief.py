@@ -266,7 +266,7 @@ def gather(hours, per_feed_cap=40, budget=150):
         health.append({"source": sid, "name": name, "ok": True, "count": len(fresh),
                        "parsed": len(entries), "dated": len(dated),
                        "fresh_all": pre_filter, "ms": ms,
-                       "newest": newest.astimezone(TZ).strftime("%m-%d %H:%M") if newest else "-"})
+                       "newest": newest.astimezone(TZ).strftime("%Y-%m-%d %H:%M") if newest else "-"})
         for e in fresh:
             e["url"] = url
             items.append(e)
