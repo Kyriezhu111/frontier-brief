@@ -135,6 +135,18 @@ RESEARCH_TERMS = [
     "tool use", "code generation", "moe", "transformer", "vision-language",
 ]
 
+OPTICS_TERMS = [
+    "optic", "photonic", "photon", "laser", "semiconductor", "chip", "wafer",
+    "lithograph", "quantum", "display", "sensor", "metamaterial", "oled", "led",
+    "imaging", "waveguide", "fiber", "silicon", "transistor", "lens",
+    "光学", "光子", "激光", "半导体", "芯片", "光刻", "光纤", "量子",
+    "传感", "显示", "晶体管", "晶圆",
+]
+
+# General-purpose science/tech feeds that carry a lot of unrelated material;
+# keep only the parts that belong in the 专业 section.
+OPTICS_ONLY = {"phys-org", "tomshardware"}
+
 STOP = set(
     """a an the of to in on for and or with at by from is are was were be been being
 this that these those it its as into about over after before new how why what when
@@ -158,6 +170,11 @@ def matches_ai(text):
 def matches_research(text):
     low = (text or "").lower()
     return any(t in low for t in RESEARCH_TERMS)
+
+
+def matches_optics(text):
+    low = (text or "").lower()
+    return any(t in low for t in OPTICS_TERMS)
 
 
 # --------------------------------------------------------------------------- #
@@ -319,6 +336,8 @@ def gather(hours, per_feed_cap=40, budget=150):
             fresh = [e for e in fresh if matches_ai(e["title"] + " " + e["summary"])]
         elif CATEGORY.get(sid) == "research":
             fresh = [e for e in fresh if matches_research(e["title"] + " " + e["summary"])]
+        elif sid in OPTICS_ONLY:
+            fresh = [e for e in fresh if matches_optics(e["title"] + " " + e["summary"])]
         fresh = fresh[:per_feed_cap]
         newest = max((e["published"] for e in dated), default=None)
         health.append({"source": sid, "name": name, "ok": True, "count": len(fresh),
@@ -389,7 +408,9 @@ def score_cluster(c, keywords):
         score += 1.5
     elif age_h <= 24:
         score += 0.5
-    blob = " ".join(i["title"] + " " + i["summary"] for i in c["items"]).lower()
+    # Title only: summaries drag in unrelated body text and produce false
+    # "关注：芯片" tags on articles that merely mention the word once.
+    blob = " ".join(i["title"] for i in c["items"]).lower()
     c["keywords"] = [k for k in keywords if k.lower() in blob]
     if c["keywords"]:
         score += 6.0
@@ -399,6 +420,11 @@ def score_cluster(c, keywords):
     c["primary"] = primary_source(c)
     c["categories"] = {CATEGORY.get(s, "media") for s in c["sources"]}
     return c
+
+
+# 值得看 is the day's headlines. Interest areas (optics/create/dev/science)
+# have their own sections and must not crowd it out.
+NEWS_CATS = {"lab", "media", "analysis", "community", "cn", "research"}
 
 
 def pick_head(clusters, limit=10, per_source_cap=3, threshold=5.5):
@@ -444,12 +470,21 @@ def build_sections(clusters, keywords):
     `personal` is the radar - anything matching the reader's own keywords goes
     to the very top, so it never competes with general AI news.
     """
-    personal = sorted((c for c in clusters if c["keywords"]),
-                      key=lambda c: c["score"], reverse=True)[:8]
+    # One keyword must not take the whole section - cap hits per keyword.
+    personal, per_kw = [], {}
+    for c in sorted((c for c in clusters if c["keywords"]),
+                    key=lambda c: c["score"], reverse=True):
+        if any(per_kw.get(k, 0) >= 2 for k in c["keywords"]):
+            continue
+        personal.append(c)
+        for k in c["keywords"]:
+            per_kw[k] = per_kw.get(k, 0) + 1
+        if len(personal) >= 8:
+            break
     picked = {id(c) for c in personal}
     rest = [c for c in clusters if id(c) not in picked]
 
-    head = pick_head(rest, limit=8)
+    head = pick_head([c for c in rest if c["categories"] <= NEWS_CATS], limit=8)
     picked |= {id(c) for c in head}
 
     buckets = []
