@@ -130,6 +130,11 @@ def matches_ai(text):
     return False
 
 
+def matches_research(text):
+    low = (text or "").lower()
+    return any(t in low for t in RESEARCH_TERMS)
+
+
 # --------------------------------------------------------------------------- #
 # fetching and parsing
 # --------------------------------------------------------------------------- #
@@ -252,10 +257,14 @@ def gather(hours, per_feed_cap=40, budget=150):
         pre_filter = len(fresh)
         if AI_ONLY.get(sid):
             fresh = [e for e in fresh if matches_ai(e["title"] + " " + e["summary"])]
+        elif CATEGORY.get(sid) == "research":
+            fresh = [e for e in fresh if matches_research(e["title"] + " " + e["summary"])]
         fresh = fresh[:per_feed_cap]
+        newest = max((e["published"] for e in dated), default=None)
         health.append({"source": sid, "name": name, "ok": True, "count": len(fresh),
                        "parsed": len(entries), "dated": len(dated),
-                       "fresh_all": pre_filter, "ms": ms})
+                       "fresh_all": pre_filter, "ms": ms,
+                       "newest": newest.astimezone(TZ).strftime("%m-%d %H:%M") if newest else "-"})
         for e in fresh:
             e["url"] = url
             items.append(e)
@@ -525,7 +534,7 @@ def main():
         flag = "  <-- NOTHING KEPT" if h["ok"] and h["count"] == 0 else ""
         print(f"  {h['source']:<16} parsed={h.get('parsed', 0):<4} dated={h.get('dated', 0):<4} "
               f"in_window={h.get('fresh_all', 0):<4} kept={h.get('count', 0):<4} "
-              f"{h.get('ms', 0):>6}ms{flag}")
+              f"newest={h.get('newest', '-'):<12} {h.get('ms', 0):>6}ms{flag}")
     slow = sorted((h for h in health if h["ok"]), key=lambda x: -x.get("ms", 0))[:5]
     print("slowest feeds: " + ", ".join(f"{h['source']}={h['ms']}ms" for h in slow))
     for h in health:
