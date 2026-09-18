@@ -85,6 +85,11 @@ def main():
     ok &= expect(b.keyword_hit("光电", "我院光电信息科学与工程专业") is True,
                   "cjk keyword matches as substring")
 
+    ok &= expect(b.needs_translation("Huawei unveils new chip tech") is True,
+                  "english title needs translation")
+    ok &= expect(b.needs_translation("华为发布新芯片技术") is False,
+                  "chinese title is left alone")
+
     now = datetime.now(timezone.utc)
 
     def mk(source, hours_ago, title):
@@ -126,6 +131,18 @@ def main():
                              [{"source": "x", "name": "X", "ok": True, "count": 1}], len(items))
     ok &= expect("<html" in html_out and "</html>" in html_out, "html renders")
     ok &= expect("{" not in html_out.split("<style>")[0], "no f-string leakage")
+
+    # Chinese-first rendering: translated title on top, original kept below.
+    zh_items = [mk("techcrunch", 2, "OpenAI ships GPT-6 Astra to all users")]
+    zh_clusters = [b.score_cluster(c, []) for c in b.cluster(zh_items)]
+    b.attach_translations(zh_clusters, {"OpenAI ships GPT-6 Astra to all users": "OpenAI 向全体用户推送 GPT-6 Astra"})
+    zh_html = b.render_html("2026-09-18", [], zh_clusters, [], [],
+                            [{"source": "x", "name": "X", "ok": True, "count": 1}], 1)
+    ok &= expect("OpenAI 向全体用户推送 GPT-6 Astra" in zh_html, "translated title renders")
+    ok &= expect("OpenAI ships GPT-6 Astra to all users" in zh_html, "original title kept")
+    zh_md = b.render_markdown("2026-09-18", [], zh_clusters, [], [], 1, 1, 1)
+    ok &= expect("原题：OpenAI ships GPT-6 Astra to all users" in zh_md,
+                  "markdown keeps the original title")
     ok &= expect(test_budget_guard(), "slow feed hits the budget guard instead of hanging")
 
     print("\nALL PASS" if ok else "\nSOME FAILED")
