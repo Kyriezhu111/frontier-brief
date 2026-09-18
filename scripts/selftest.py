@@ -72,20 +72,28 @@ def main():
         mk("hn", 6, "Something entirely unrelated about databases"),
     ]
     clusters = [b.score_cluster(c, ["Astra"]) for c in b.cluster(items)]
-    head, cn, research, other = b.build_sections(clusters, ["Astra"])
+    personal, head, buckets, other = b.build_sections(clusters, ["Astra"])
     multi = [c for c in clusters if c["distinct"] >= 2 and len(c["categories"]) > 1]
 
     ok &= expect(len(clusters) < len(items), "clustering merges near-duplicates")
     ok &= expect(any(c["distinct"] >= 2 for c in clusters), "cross-source merge works")
     ok &= expect(all(len(c["categories"]) <= 3 for c in clusters), "categories computed")
     ok &= expect(any(c["keywords"] for c in clusters), "keyword tagging works")
-    ok &= expect(all(c["categories"] <= {"research"} for c in research), "research bucket pure")
-    ok &= expect(all(c["categories"] <= {"cn"} for c in cn), "cn bucket pure")
+    ok &= expect(all(c["keywords"] for c in personal), "personal section only holds radar hits")
+    ok &= expect(all(
+        all(len(c["categories"]) == 1 for c in g) for _, g in buckets
+    ), "every bucket is single-category")
+    placed = [id(c) for c in personal] + [id(c) for c in head]
+    placed += [id(c) for _, g in buckets for c in g] + [id(c) for c in other]
+    ok &= expect(len(placed) == len(set(placed)), "no cluster is shown twice")
+    ok &= expect(set(placed) == {id(c) for c in clusters},
+                  "every cluster lands in exactly one section")
     ok &= expect(bool(multi) is False, "no mixed-category cluster leaked into a bucket")
 
-    md = b.render_markdown("2026-09-18", head, cn, research, other, len(items), 35, 36)
+    md = b.render_markdown("2026-09-18", personal, head, buckets, other, len(items), 35, 36)
     ok &= expect(md.startswith("# 前沿简报"), "markdown renders")
-    html_out = b.render_html("2026-09-18", head, cn, research, other,
+    ok &= expect("## 跟你有关" in md, "personal section renders in markdown")
+    html_out = b.render_html("2026-09-18", personal, head, buckets, other,
                              [{"source": "x", "name": "X", "ok": True, "count": 1}], len(items))
     ok &= expect("<html" in html_out and "</html>" in html_out, "html renders")
     ok &= expect("{" not in html_out.split("<style>")[0], "no f-string leakage")
