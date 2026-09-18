@@ -77,16 +77,42 @@ FEEDS = [
     ("infoq-cn", "InfoQ 中文", "https://www.infoq.cn/feed", "cn", 2, True),
     ("sspai", "少数派", "https://sspai.com/feed", "cn", 2, True),
     ("ruanyifeng", "阮一峰", "https://www.ruanyifeng.com/blog/atom.xml", "cn", 3, False),
+    # --- 专业：光电 / 物理 / 半导体 ------------------------------------------
+    ("nature-photonics", "Nature Photonics", "https://www.nature.com/nphoton.rss", "optics", 4, False),
+    ("physicsworld", "Physics World", "https://physicsworld.com/feed/", "optics", 3, False),
+    ("phys-org", "Phys.org", "https://phys.org/rss-feed/technology-news/", "optics", 3, False),
+    ("semiengineering", "Semiconductor Engineering", "https://semiengineering.com/feed/", "optics", 3, False),
+    ("tomshardware", "Tom's Hardware", "https://www.tomshardware.com/feeds/all", "optics", 2, False),
+    ("arxiv-optics", "arXiv physics.optics", "https://export.arxiv.org/rss/physics.optics", "optics", 1, False),
+    ("arxiv-appph", "arXiv physics.app-ph", "https://export.arxiv.org/rss/physics.app-ph", "optics", 1, False),
+    # --- 创作：影像 / 剪辑 / 摄影 -------------------------------------------
+    ("petapixel", "PetaPixel", "https://petapixel.com/feed/", "create", 3, False),
+    ("nofilmschool", "No Film School", "https://nofilmschool.com/feed", "create", 3, False),
+    ("newsshooter", "Newsshooter", "https://www.newsshooter.com/feed", "create", 2, False),
+    ("provideocoalition", "ProVideo Coalition", "https://www.provideocoalition.com/feed/", "create", 2, False),
+    ("fstoppers", "Fstoppers", "https://fstoppers.com/feed", "create", 2, False),
+    ("diyphotography", "DIYPhotography", "https://www.diyphotography.net/feed/", "create", 2, False),
+    # --- 开发：开源 / 工具 ---------------------------------------------------
+    ("github-trending", "GitHub Trending", "https://mshibanami.github.io/GitHubTrendingRSS/daily/all.xml", "dev", 3, False),
+    ("hackaday", "Hackaday", "https://hackaday.com/blog/feed/", "dev", 2, False),
+    # --- 科学 ---------------------------------------------------------------
+    ("quantamagazine", "Quanta Magazine", "https://www.quantamagazine.org/feed/", "science", 4, False),
+    ("nature-main", "Nature", "https://www.nature.com/nature.rss", "science", 4, False),
+    ("sciencedaily", "ScienceDaily", "https://www.sciencedaily.com/rss/all.xml", "science", 2, False),
+    # --- 学习：英语 ----------------------------------------------------------
+    ("voa-learning", "VOA Learning English", "https://learningenglish.voanews.com/api/zq$omekvi_", "study", 3, False),
 ]
 
 # Lab and analysis blogs publish every few days, not every few hours. With a
 # plain 36-48h window they would almost never appear; recency scoring still
 # keeps them out of the top section.
-WINDOW_MULT = {"lab": 4, "analysis": 4}
+WINDOW_MULT = {"lab": 4, "analysis": 4, "optics": 3, "create": 3, "science": 3}
 
 CATEGORY_LABEL = {
     "lab": "实验室一手", "media": "科技媒体", "analysis": "从业者分析",
     "community": "社区热度", "research": "研究前沿", "cn": "中文源",
+    "optics": "专业 · 光电/物理/半导体", "create": "创作 · 影像/剪辑/摄影",
+    "dev": "开发 · 开源/工具", "science": "科学", "study": "学习 · 英语",
 }
 
 WEIGHT = {sid: w for sid, _, _, _, w, _ in FEEDS}
@@ -376,17 +402,48 @@ def research_rank(c):
     return (rel > 0, rel, c["newest"])
 
 
+# Fixed section order and per-section caps. These are the reader's own
+# interest areas, not just "AI news".
+SECTION_ORDER = [
+    ("cn", "中文源", 8),
+    ("optics", "专业 · 光电/物理/半导体", 8),
+    ("create", "创作 · 影像/剪辑/摄影", 8),
+    ("dev", "开发 · 开源/工具", 6),
+    ("science", "科学", 6),
+    ("study", "学习 · 英语", 5),
+    ("research", "研究前沿", 6),
+]
+
+
 def build_sections(clusters, keywords):
-    head = pick_head(clusters)
-    rest = [c for c in clusters if c not in head]
-    cn = [c for c in rest if c["categories"] <= {"cn"}]
-    rest = [c for c in rest if c not in cn]
-    research = [c for c in rest if c["categories"] <= {"research"}]
-    other = [c for c in rest if c not in research]
-    cn.sort(key=lambda c: c["score"], reverse=True)
-    research.sort(key=research_rank, reverse=True)
-    other.sort(key=lambda c: c["score"], reverse=True)
-    return head, cn, research, other
+    """Returns (personal, head, buckets, other).
+
+    `personal` is the radar - anything matching the reader's own keywords goes
+    to the very top, so it never competes with general AI news.
+    """
+    personal = sorted((c for c in clusters if c["keywords"]),
+                      key=lambda c: c["score"], reverse=True)[:8]
+    picked = {id(c) for c in personal}
+    rest = [c for c in clusters if id(c) not in picked]
+
+    head = pick_head(rest, limit=8)
+    picked |= {id(c) for c in head}
+
+    buckets = []
+    for cat, label, cap in SECTION_ORDER:
+        group = [c for c in rest if id(c) not in picked and c["categories"] <= {cat}]
+        if cat == "research":
+            group.sort(key=research_rank, reverse=True)
+        else:
+            group.sort(key=lambda c: c["score"], reverse=True)
+        if group:
+            chosen = group[:cap]
+            buckets.append((label, chosen))
+            picked |= {id(c) for c in chosen}
+
+    other = sorted((c for c in rest if id(c) not in picked),
+                   key=lambda c: c["score"], reverse=True)
+    return personal, head, buckets, other
 
 
 # --------------------------------------------------------------------------- #
@@ -410,6 +467,7 @@ h2{font-size:13px;letter-spacing:.14em;color:#8b94a7;font-weight:600;text-transf
 .badge{display:inline-block;background:#1b2740;color:#7aa2f7;border-radius:4px;
        padding:1px 6px;font-size:11px;margin-right:6px;vertical-align:1px}
 .kw{background:#2a2140;color:#c4a8ff}
+.you{color:#c4a8ff;border-bottom-color:#2a2140}
 footer{margin-top:44px;padding-top:16px;border-top:1px solid #1e2431;color:#6b7484;font-size:12.5px}
 .empty{color:#8b94a7;font-size:14px}
 """
@@ -439,7 +497,7 @@ def render_items(clusters, limit=None):
     return "\n".join(out) or '<p class="empty">这个时间段没有内容。</p>'
 
 
-def render_html(today, head, cn, research, other, health, total_items):
+def render_html(today, personal, head, buckets, other, health, total_items):
     parts = [
         "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">",
         '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">',
@@ -448,21 +506,21 @@ def render_html(today, head, cn, research, other, health, total_items):
         "<header>",
         f"<h1>前沿简报</h1><div class=\"date\">{today} · 墙外一手源 · {total_items} 条信号</div>",
         "</header>",
-        "<h2>值得看</h2>", render_items(head, limit=10),
     ]
-    if cn:
-        parts += ["<h2>中文源</h2>", render_items(cn, limit=8)]
-    if research:
-        parts += ["<h2>研究前沿</h2>", render_items(research, limit=6)]
+    if personal:
+        parts += ['<h2 class="you">跟你有关</h2>', render_items(personal)]
+    parts += ["<h2>值得看</h2>", render_items(head)]
+    for label, group in buckets:
+        parts += [f"<h2>{esc(label)}</h2>", render_items(group)]
     if other:
-        parts += ["<h2>其他</h2>", render_items(other, limit=16)]
+        parts += ["<h2>其他</h2>", render_items(other, limit=14)]
     ok = sum(1 for h in health if h["ok"])
     bad = [h["name"] for h in health if not h["ok"]]
     parts.append("<footer>")
     parts.append(f"采集源 {ok}/{len(health)} 正常。")
     if bad:
         parts.append(f"这次没取到的：{esc('、'.join(bad))}。")
-    parts.append("<br>排序：被越多独立来源报道越靠前；同一来源最多占 2 条。")
+    parts.append("<br>排序：被越多独立来源报道越靠前；同一来源在头部分最多占 3 条。")
     parts.append('<br><a class="back" href="./">← 往期</a>')
     parts.append("</footer></div></body></html>")
     return "\n".join(parts)
@@ -480,7 +538,7 @@ def render_index(dates):
     )
 
 
-def render_markdown(today, head, cn, research, other, total_items, ok, total_feeds):
+def render_markdown(today, personal, head, buckets, other, total_items, ok, total_feeds):
     def line(c):
         primary = max(c["items"], key=lambda i: WEIGHT.get(i["source"], 1))
         tag = f"[{c['distinct']} 家源] " if c["distinct"] >= 2 else ""
@@ -488,15 +546,14 @@ def render_markdown(today, head, cn, research, other, total_items, ok, total_fee
         return f"- {tag}[{primary['title']}]({primary['link']}) — {' / '.join(sorted(c['sources']))}{kw}"
 
     out = [f"# 前沿简报 · {today}", "",
-           f"墙外一手源直采 · {total_items} 条信号 · 采集源 {ok}/{total_feeds} 正常", "",
-           "## 值得看", ""]
-    out += [line(c) for c in head] or ["- （无）"]
-    if cn:
-        out += ["", "## 中文源", ""] + [line(c) for c in cn[:8]]
-    if research:
-        out += ["", "## 研究前沿", ""] + [line(c) for c in research[:6]]
+           f"墙外一手源直采 · {total_items} 条信号 · 采集源 {ok}/{total_feeds} 正常", ""]
+    if personal:
+        out += ["## 跟你有关", ""] + [line(c) for c in personal]
+    out += ["", "## 值得看", ""] + ([line(c) for c in head] or ["- （无）"])
+    for label, group in buckets:
+        out += ["", f"## {label}", ""] + [line(c) for c in group]
     if other:
-        out += ["", "## 其他", ""] + [line(c) for c in other[:16]]
+        out += ["", "## 其他", ""] + [line(c) for c in other[:14]]
     return "\n".join(out) + "\n"
 
 
@@ -520,15 +577,15 @@ def main():
     os.makedirs(args.out, exist_ok=True)
     items, health = gather(args.hours)
     clusters = [score_cluster(c, keywords) for c in cluster(items)]
-    head, cn, research, other = build_sections(clusters, keywords)
+    personal, head, buckets, other = build_sections(clusters, keywords)
 
     today = datetime.now(TZ).strftime("%Y-%m-%d")
     ok = sum(1 for h in health if h["ok"])
 
     with open(os.path.join(args.out, f"{today}.html"), "w", encoding="utf-8") as fh:
-        fh.write(render_html(today, head, cn, research, other, health, len(items)))
+        fh.write(render_html(today, personal, head, buckets, other, health, len(items)))
     with open(os.path.join(args.out, f"{today}.md"), "w", encoding="utf-8") as fh:
-        fh.write(render_markdown(today, head, cn, research, other, len(items), ok, len(health)))
+        fh.write(render_markdown(today, personal, head, buckets, other, len(items), ok, len(health)))
 
     dates = sorted(
         (f[:-5] for f in os.listdir(args.out) if re.fullmatch(r"\d{4}-\d{2}-\d{2}\.html", f)),
@@ -537,8 +594,9 @@ def main():
     with open(os.path.join(args.out, "index.html"), "w", encoding="utf-8") as fh:
         fh.write(render_index(dates))
 
-    print(f"items={len(items)} clusters={len(clusters)} head={len(head)} cn={len(cn)} "
-          f"research={len(research)} other={len(other)} feeds_ok={ok}/{len(health)}")
+    print(f"items={len(items)} clusters={len(clusters)} personal={len(personal)} "
+          f"head={len(head)} other={len(other)} feeds_ok={ok}/{len(health)}")
+    print("sections: " + ", ".join(f"{label}={len(g)}" for label, g in buckets))
     print("head sources: " + ", ".join(c["primary"] for c in head))
     print("per feed (parsed/dated/fresh):")
     for h in sorted(health, key=lambda x: x["source"]):
